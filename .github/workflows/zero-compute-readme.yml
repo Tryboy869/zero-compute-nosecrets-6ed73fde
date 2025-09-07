@@ -1,0 +1,98 @@
+
+name: "Zero-Compute README Storage"
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: 'Operation'
+        default: 'fibonacci'
+      input_value:
+        description: 'Input'  
+        default: '15'
+
+jobs:
+  readme-compute:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        
+      - name: Check README for cached result
+        run: |
+          echo "START=$(date +%s%N)" >> $GITHUB_ENV
+          operation="${{ github.event.inputs.operation || 'fibonacci' }}"
+          input="${{ github.event.inputs.input_value || '15' }}"
+          
+          echo "🔍 Searching README for cached $operation($input)..."
+          
+          if grep -q "${operation}(${input})" README.md; then
+            result=$(grep "${operation}(${input})" README.md | grep -o 'Result: [0-9]*' | cut -d' ' -f2)
+            echo "⚡ FOUND CACHED RESULT IN README!"
+            echo "CACHED_RESULT=$result" >> $GITHUB_ENV
+            echo "CACHE_HIT=true" >> $GITHUB_ENV
+            echo "🎯 Retrieved: $result"
+          else
+            echo "💾 No cached result - will compute"
+            echo "CACHE_HIT=false" >> $GITHUB_ENV
+          fi
+          
+      - name: Compute if needed
+        if: env.CACHE_HIT != 'true' 
+        run: |
+          operation="${{ github.event.inputs.operation || 'fibonacci' }}"
+          input="${{ github.event.inputs.input_value || '15' }}"
+          
+          case $operation in
+            "fibonacci")
+              if [ $input -le 1 ]; then result=$input
+              else
+                a=0; b=1
+                for i in $(seq 2 $input); do temp=$((a + b)); a=$b; b=$temp; done
+                result=$b
+              fi
+              ;;
+            "factorial")
+              result=1
+              for i in $(seq 1 $input); do result=$((result * i)); done
+              ;;
+          esac
+          
+          echo "COMPUTED_RESULT=$result" >> $GITHUB_ENV
+          echo "✅ Computed: $result"
+          
+      - name: Update README with result
+        if: env.CACHE_HIT != 'true'
+        run: |
+          operation="${{ github.event.inputs.operation || 'fibonacci' }}"
+          input="${{ github.event.inputs.input_value || '15' }}"  
+          result="${{ env.COMPUTED_RESULT }}"
+          
+          echo "" >> README.md
+          echo "## Cached Results" >> README.md
+          echo "- ${operation}(${input}) = Result: ${result} ($(date))" >> README.md
+          
+          git config user.name "Zero-Compute Bot"
+          git config user.email "bot@example.com"
+          git add README.md
+          git commit -m "Cache result: ${operation}(${input}) = ${result}"
+          git push
+          
+          echo "✅ Result cached in README for future zero-compute!"
+          
+      - name: Final metrics
+        run: |
+          end=$(date +%s%N)
+          duration=$(((end - START) / 1000000))
+          
+          if [ "${{ env.CACHE_HIT }}" == "true" ]; then
+            result="${{ env.CACHED_RESULT }}"
+            compute_type="ZERO"
+          else  
+            result="${{ env.COMPUTED_RESULT }}"
+            compute_type="INITIAL"
+          fi
+          
+          echo "📊 README STORAGE METRICS:"
+          echo "Duration: ${duration}ms"
+          echo "Cache hit: ${{ env.CACHE_HIT }}"
+          echo "Result: $result" 
+          echo "Compute used: $compute_type"
