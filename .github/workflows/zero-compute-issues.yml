@@ -1,0 +1,113 @@
+
+name: "Zero-Compute Issues DB"
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: 'Operation'
+        default: 'factorial'
+      input_value:
+        description: 'Input'
+        default: '12'
+
+jobs:
+  issues-compute:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check existing result in issues
+        run: |
+          echo "START=$(date +%s%N)" >> $GITHUB_ENV
+          operation="${{ github.event.inputs.operation || 'factorial' }}"
+          input="${{ github.event.inputs.input_value || '12' }}"
+          label="result-${operation}-${input}"
+          
+          echo "🔍 Searching for cached result with label: $label"
+          
+          # Search for existing issue with our label
+          response=$(curl -s \
+            -H "Accept: application/vnd.github.v3+json" \
+            -H "Authorization: token ${{ github.token }}" \
+            "https://api.github.com/repos/${{ github.repository }}/issues?labels=$label&state=all")
+          
+          echo "API Response: $response"
+          
+          # Check if we found an existing result
+          issue_count=$(echo "$response" | jq length)
+          
+          if [ "$issue_count" -gt 0 ]; then
+            echo "⚡ FOUND CACHED RESULT IN ISSUES!"
+            result=$(echo "$response" | jq -r '.[0].title' | grep -o '[0-9]*$')
+            echo "CACHED_RESULT=$result" >> $GITHUB_ENV
+            echo "CACHE_HIT=true" >> $GITHUB_ENV
+            echo "🎯 Retrieved from issues DB: $result"
+          else
+            echo "💾 No cached result found - will compute"
+            echo "CACHE_HIT=false" >> $GITHUB_ENV
+          fi
+          
+      - name: Compute if not cached
+        if: env.CACHE_HIT != 'true'
+        run: |
+          operation="${{ github.event.inputs.operation || 'factorial' }}"
+          input="${{ github.event.inputs.input_value || '12' }}"
+          
+          echo "🔄 Computing $operation($input)..."
+          
+          case $operation in
+            "factorial")
+              result=1
+              for i in $(seq 1 $input); do result=$((result * i)); done
+              ;;
+            "fibonacci")
+              if [ $input -le 1 ]; then result=$input
+              else
+                a=0; b=1
+                for i in $(seq 2 $input); do temp=$((a + b)); a=$b; b=$temp; done
+                result=$b
+              fi
+              ;;
+          esac
+          
+          echo "COMPUTED_RESULT=$result" >> $GITHUB_ENV
+          echo "✅ Computed: $result"
+          
+      - name: Store result in issues (if new)
+        if: env.CACHE_HIT != 'true'
+        run: |
+          operation="${{ github.event.inputs.operation || 'factorial' }}"
+          input="${{ github.event.inputs.input_value || '12' }}"
+          result="${{ env.COMPUTED_RESULT }}"
+          label="result-${operation}-${input}"
+          
+          echo "💾 Storing result in issues database..."
+          
+          curl -X POST \
+            -H "Accept: application/vnd.github.v3+json" \
+            -H "Authorization: token ${{ github.token }}" \
+            "https://api.github.com/repos/${{ github.repository }}/issues" \
+            -d "{
+              \"title\": \"$operation($input) = $result\",
+              \"body\": \"Cached computation result\\n\\nOperation: $operation\\nInput: $input\\nResult: $result\\nTimestamp: $(date)\",
+              \"labels\": [\"$label\", \"cached-result\"]
+            }"
+            
+          echo "✅ Result stored for future zero-compute retrieval!"
+          
+      - name: Final metrics
+        run: |
+          end=$(date +%s%N)
+          duration=$(((end - START) / 1000000))
+          
+          if [ "${{ env.CACHE_HIT }}" == "true" ]; then
+            result="${{ env.CACHED_RESULT }}"
+            compute_type="ZERO"
+          else
+            result="${{ env.COMPUTED_RESULT }}"
+            compute_type="INITIAL"  
+          fi
+          
+          echo "📊 ISSUES DB METRICS:"
+          echo "Duration: ${duration}ms"
+          echo "Cache hit: ${{ env.CACHE_HIT }}"
+          echo "Result: $result"
+          echo "Compute used: $compute_type"
