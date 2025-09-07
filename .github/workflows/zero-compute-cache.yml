@@ -1,0 +1,100 @@
+
+name: "Zero-Compute Cache"
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: 'Operation'
+        default: 'factorial'
+        type: choice
+        options: [factorial, fibonacci, prime_count]
+      input_value:
+        description: 'Input'
+        default: '10'
+
+jobs:
+  zero-compute:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Record start
+        run: echo "START=$(date +%s%N)" >> $GITHUB_ENV
+        
+      - name: Generate cache key
+        id: cache-key
+        run: |
+          operation="${{ github.event.inputs.operation || 'factorial' }}"
+          input="${{ github.event.inputs.input_value || '10' }}"
+          key="zero-compute-${operation}-${input}-v1"
+          echo "key=$key" >> $GITHUB_OUTPUT
+          echo "🔑 Cache key: $key"
+          
+      - name: Try cache (ZERO-COMPUTE MAGIC)
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: ./compute-result
+          key: ${{ steps.cache-key.outputs.key }}
+          
+      - name: Compute ONLY if cache miss
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          echo "💾 Cache MISS - Computing (FIRST TIME ONLY)"
+          mkdir -p compute-result
+          
+          operation="${{ github.event.inputs.operation || 'factorial' }}"
+          input="${{ github.event.inputs.input_value || '10' }}"
+          
+          case $operation in
+            "factorial")
+              result=1
+              for i in $(seq 1 $input); do result=$((result * i)); done
+              ;;
+            "fibonacci")
+              if [ $input -le 1 ]; then result=$input
+              else
+                a=0; b=1
+                for i in $(seq 2 $input); do temp=$((a + b)); a=$b; b=$temp; done
+                result=$b
+              fi
+              ;;
+            "prime_count")
+              result=0
+              for n in $(seq 2 $input); do
+                is_prime=1
+                for i in $(seq 2 $((n/2))); do
+                  if [ $((n % i)) -eq 0 ]; then is_prime=0; break; fi
+                done
+                if [ $is_prime -eq 1 ]; then result=$((result + 1)); fi
+              done
+              ;;
+          esac
+          
+          echo $result > compute-result/value.txt
+          echo "timestamp=$(date +%s%N)" > compute-result/meta.txt
+          echo "✅ Computed and cached: $result"
+          
+      - name: Read result (ZERO-COMPUTE SUCCESS!)
+        run: |
+          cache_status="${{ steps.cache.outputs.cache-hit }}"
+          
+          if [ "$cache_status" == "true" ]; then
+            echo "⚡ CACHE HIT - ZERO COMPUTE USED!"
+            echo "🎯 This is FREE computation!"
+          else
+            echo "💰 First computation - now cached for future"
+          fi
+          
+          result=$(cat compute-result/value.txt)
+          echo "Result: $result"
+          
+          end=$(date +%s%N)  
+          duration=$(((end - START) / 1000000))
+          
+          echo "📊 ZERO-COMPUTE METRICS:"
+          echo "Duration: ${duration}ms"
+          echo "Cache hit: $cache_status"
+          echo "Result: $result"
+          compute_used=$([ "$cache_status" == "true" ] && echo "ZERO" || echo "INITIAL")
+          echo "Compute used: $compute_used"
